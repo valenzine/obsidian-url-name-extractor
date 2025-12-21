@@ -31,10 +31,10 @@ Easier with the command binded to a keyboard shortcut.
 Customize the regular expression used to detect URLs in your text. The default pattern is:
 
 ```regex
-(?<!\]\(\s*)(?<=\s|\(|\[|^)https?:\/\/[^\s\]]+
+https?:\/\/[^\s\]\)]+
 ```
 
-This liberal pattern matches any `http://` or `https://` URL. The plugin validates URLs using the native URL constructor, so invalid URLs are safely ignored.
+This pattern is compatible with all devices including iOS. It matches any `http://` or `https://` URL and automatically filters out URLs already in markdown links `[text](url)`. The plugin validates URLs using the native URL constructor, so invalid URLs are safely ignored.
 
 ### Site-Specific Title Patterns
 
