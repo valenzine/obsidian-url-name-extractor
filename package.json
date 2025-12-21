@@ -1,7 +1,7 @@
 {
 	"name": "obsidian-url-name-extractor",
-	"version": "2.0.0",
-	"description": "Retrieves HTML titles to name raw URL links. Configurable regex patterns for URL detection and site-specific title extraction.",
+	"version": "2.0.1",
+	"description": "Converts raw URLs into markdown links by automatically fetching webpage titles. Configurable regex patterns for URL detection and site-specific title extraction.",
 	"main": "main.js",
 	"repository": {
 		"type": "git",
