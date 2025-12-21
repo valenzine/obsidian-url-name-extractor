@@ -1,10 +1,10 @@
 {
-    "id": "url-namer",
-    "name": "URL Namer",
-    "version": "1.0.1",
+    "id": "url-name-extractor",
+    "name": "URL Name Extractor",
+    "version": "2.0.0",
     "minAppVersion": "0.12.0",
-    "description": "This plugin retrieves the HTML titles to name the raw URL links.",
-    "author": "zfei",
-    "authorUrl": "https://github.com/zfei/obsidian-url-namer",
+    "description": "Retrieves HTML titles to name raw URL links. Fork of url-namer with configurable regex patterns.",
+    "author": "valenzine",
+    "authorUrl": "https://github.com/valenzine/obsidian-url-name-extractor",
     "isDesktopOnly": false
 }
