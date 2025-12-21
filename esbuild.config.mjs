@@ -1,9 +1,9 @@
 import esbuild from "esbuild";
-import { esbuildCommands } from 'esbuild-plugin-commands';
 import process from "process";
 import builtins from 'builtin-modules'
 import path from "path";
 import { fileURLToPath } from 'url';
+import { copyFileSync } from 'fs';
 
 const banner =
 	`/*
@@ -16,7 +16,7 @@ const prod = (process.argv[2] === 'production');
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const distDir = `${currentDir}/dist`;
 
-esbuild.build({
+const buildOptions = {
 	banner: {
 		js: banner,
 	},
@@ -51,14 +51,26 @@ esbuild.build({
 		'@lezer/lr',
 		...builtins],
 	format: 'cjs',
-	watch: !prod,
 	target: 'es2016',
 	logLevel: "info",
 	sourcemap: prod ? false : 'inline',
 	treeShaking: true,
 	outfile: `${distDir}/main.js`,
-	plugins: [
-		esbuildCommands({ onSuccess: `cp ${currentDir}/manifest.json ${distDir}/manifest.json` }),
-		esbuildCommands({ onSuccess: `cp ${currentDir}/styles.css ${distDir}/styles.css` }),
-	],
-}).catch(() => process.exit(1));
+};
+
+if (prod) {
+	// Production build
+	esbuild.build(buildOptions).then(() => {
+		copyFileSync(`${currentDir}/manifest.json`, `${distDir}/manifest.json`);
+		copyFileSync(`${currentDir}/styles.css`, `${distDir}/styles.css`);
+		console.log('✓ Build completed successfully');
+	}).catch(() => process.exit(1));
+} else {
+	// Development build with watch mode
+	esbuild.context(buildOptions).then(ctx => {
+		ctx.watch();
+		copyFileSync(`${currentDir}/manifest.json`, `${distDir}/manifest.json`);
+		copyFileSync(`${currentDir}/styles.css`, `${distDir}/styles.css`);
+		console.log('👀 Watching for changes...');
+	}).catch(() => process.exit(1));
+}
