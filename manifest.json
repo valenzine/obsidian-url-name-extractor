@@ -1,10 +1,10 @@
 {
     "id": "url-name-extractor",
     "name": "URL Name Extractor",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "minAppVersion": "0.12.0",
-    "description": "Retrieves HTML titles to name raw URL links. Fork of url-namer with configurable regex patterns.",
+    "description": "Converts raw URLs into markdown links by automatically fetching webpage titles.",
     "author": "valenzine",
-    "authorUrl": "https://github.com/valenzine/obsidian-url-name-extractor",
+    "authorUrl": "https://github.com/valenzine/",
     "isDesktopOnly": false
 }
