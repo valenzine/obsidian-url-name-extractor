@@ -12,7 +12,7 @@ interface UrlNameExtractorSettings {
 }
 
 const DEFAULT_SETTINGS: UrlNameExtractorSettings = {
-    urlRegex: '(?<!\\]\\(\\s*)(?<=\\s|\\(|\\[|^)https?:\\/\\/[^\\s\\]]+',
+    urlRegex: 'https?:\\/\\/[^\\s\\]\\)]+',
     sitePatterns: [],
     useArchiveFallback: false
 };
@@ -26,7 +26,7 @@ export default class UrlNamer extends Plugin {
         await this.loadSettings();
 
         this.addCommand({
-            id: 'url-namer-selection',
+            id: 'convert-urls-to-titled-links',
             name: 'Name the URL links in the selected text',
             editorCallback: (editor: Editor, view: MarkdownView) => {
                 const loadingIndicator = new Notice('Fetching titles for selected text...', 0);
@@ -166,6 +166,7 @@ class UrlTagger {
 
     static async getTaggedText(selectedText: string, settings: UrlNameExtractorSettings) {
         const promises: any[] = [];
+        const urlsToProcess: string[] = [];
         
         let urlPattern: RegExp;
         try {
@@ -175,17 +176,40 @@ class UrlTagger {
             return selectedText;
         }
 
-        selectedText.replace(urlPattern, match => {
-            const promise = UrlTitleFetcher.getNamedUrlTag(match, settings);
-            promises.push(promise);
-            return match;
-        });
+        // Find all URLs and check if they're already in markdown links
+        let match;
+        while ((match = urlPattern.exec(selectedText)) !== null) {
+            const url = match[0];
+            const matchIndex = match.index;
+            
+            // Check if URL is already part of a markdown link [text](url)
+            // Look for "](" before the URL
+            const beforeUrl = selectedText.substring(Math.max(0, matchIndex - 2), matchIndex);
+            const isInMarkdownLink = beforeUrl === '](';
+            
+            if (!isInMarkdownLink) {
+                urlsToProcess.push(url);
+                const promise = UrlTitleFetcher.getNamedUrlTag(url, settings);
+                promises.push(promise);
+            }
+        }
+
+        if (urlsToProcess.length === 0) {
+            new Notice('No raw URLs found to process.');
+            return selectedText;
+        }
 
         const namedTags = await Promise.all(promises);
 
         new Notice(`Processed ${namedTags.length} urls.`);
 
-        return selectedText.replace(urlPattern, () => namedTags.shift());
+        // Replace URLs with their named versions
+        let result = selectedText;
+        urlsToProcess.forEach((url, index) => {
+            result = result.replace(url, namedTags[index]);
+        });
+
+        return result;
     }
 
 }
