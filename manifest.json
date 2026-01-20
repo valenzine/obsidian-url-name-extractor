@@ -1,7 +1,7 @@
 {
     "id": "url-name-extractor",
     "name": "URL Name Extractor",
-    "version": "2.0.2",
+    "version": "2.0.3",
     "minAppVersion": "0.12.0",
     "description": "Converts raw URLs into markdown links by automatically fetching webpage titles.",
     "author": "valenzine",
