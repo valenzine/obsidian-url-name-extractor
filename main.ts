@@ -1,5 +1,20 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, requestUrl } from 'obsidian';
 
+// Custom error classes for special error handling
+class MicrolinkRateLimitError extends Error {
+    constructor() {
+        super('Microlink daily limit exceeded');
+        this.name = 'MicrolinkRateLimitError';
+    }
+}
+
+class BotProtectionError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'BotProtectionError';
+    }
+}
+
 interface SitePattern {
     urlMatch: string;
     titleRegex: string;
@@ -12,8 +27,6 @@ interface UrlNameExtractorSettings {
     useMicrolinkFallback: boolean;
     microlinkApiKey: string;
     fallbackPriority: 'archive-first' | 'microlink-first';
-    followRedirects: boolean;
-    maxRedirects: number;
     requestDelay: number;
 }
 
@@ -24,8 +37,6 @@ const DEFAULT_SETTINGS: UrlNameExtractorSettings = {
     useMicrolinkFallback: false,
     microlinkApiKey: '',
     fallbackPriority: 'microlink-first',
-    followRedirects: true,
-    maxRedirects: 5,
     requestDelay: 1000  // 1 second delay between bulk requests to avoid rate limiting
 };
 
@@ -56,6 +67,14 @@ export default class UrlNamer extends Plugin {
 
     async loadSettings() {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+        
+        // Validate and clamp numeric values
+        this.settings.requestDelay = Math.max(0, Math.min(5000, this.settings.requestDelay ?? 1000));
+        
+        // Validate fallback priority
+        if (!['archive-first', 'microlink-first'].includes(this.settings.fallbackPriority)) {
+            this.settings.fallbackPriority = 'microlink-first';
+        }
     }
 
     async saveSettings() {
@@ -137,6 +156,9 @@ class UrlNameExtractorSettingTab extends PluginSettingTab {
                     component.inputEl.cols = 50;
                 }));
 
+        // Note: Obsidian's requestUrl() automatically handles HTTP redirects
+        // No manual redirect configuration needed
+
         new Setting(containerEl)
             .setName('Use Archive.org fallback')
             .setDesc('When a site blocks access (e.g., Cloudflare), attempt to fetch from Archive.org\'s Wayback Machine. May not have recent content.')
@@ -203,27 +225,9 @@ class UrlNameExtractorSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
-        new Setting(containerEl)
-            .setName('Follow HTTP redirects')
-            .setDesc('Automatically follow redirects (301, 302, etc.) when fetching page titles. Disable if you only want to fetch from the exact URL provided.')
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.followRedirects)
-                .onChange(async (value) => {
-                    this.plugin.settings.followRedirects = value;
-                    await this.plugin.saveSettings();
-                }));
+        // Note: Obsidian's requestUrl() automatically handles HTTP redirects
+        // No manual redirect configuration needed
 
-        new Setting(containerEl)
-            .setName('Maximum redirects')
-            .setDesc('Maximum number of redirects to follow before giving up. Prevents infinite redirect loops.')
-            .addSlider(slider => slider
-                .setLimits(1, 10, 1)
-                .setValue(this.plugin.settings.maxRedirects)
-                .setDynamicTooltip()
-                .onChange(async (value) => {
-                    this.plugin.settings.maxRedirects = value;
-                    await this.plugin.saveSettings();
-                }));
     }
 }
 
@@ -288,6 +292,9 @@ class UrlTagger {
 
         // Process URLs sequentially with delay to avoid rate limiting
         const namedTags: string[] = [];
+        let successCount = 0;
+        let failureCount = 0;
+        
         for (let i = 0; i < urlsToProcess.length; i++) {
             const url = urlsToProcess[i];
             
@@ -299,15 +306,17 @@ class UrlTagger {
             try {
                 const namedTag = await UrlTitleFetcher.getNamedUrlTag(url, settings);
                 namedTags.push(namedTag);
+                successCount++;
             } catch (error) {
                 // On error, keep the original URL
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 new Notice(`Failed to fetch title for ${url}: ${errorMsg}`, 5000);
                 namedTags.push(url);
+                failureCount++;
             }
         }
 
-        new Notice(`Processed ${namedTags.length} urls.`);
+        new Notice(`Processed ${namedTags.length} URLs: ${successCount} successful, ${failureCount} failed.`);
 
         // Replace URLs with their named versions
         // Important: Can't use simple replace() because it only replaces first occurrence
@@ -359,9 +368,6 @@ class UrlTitleFetcher {
         /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']*)["']/im,
         /<meta[^>]+content=["']([^"']*)["'][^>]+property=["']og:title["']/im
     ];
-    // LRU-style cache with size limit
-    static redirectCache: Map<string, string> = new Map();
-    static readonly MAX_CACHE_SIZE = 500;
 
     static isValidUrl(s: string): boolean {
         try {
@@ -372,17 +378,6 @@ class UrlTitleFetcher {
         }
     };
 
-    // Cache management with LRU eviction
-    private static addToCache(key: string, value: string): void {
-        // If cache is full, remove oldest entries (first 10%)
-        if (this.redirectCache.size >= this.MAX_CACHE_SIZE) {
-            const keysToDelete = Array.from(this.redirectCache.keys())
-                .slice(0, Math.floor(this.MAX_CACHE_SIZE * 0.1));
-            keysToDelete.forEach(k => this.redirectCache.delete(k));
-        }
-        this.redirectCache.set(key, value);
-    }
-
     static decodeHtmlEntities(text: string): string {
         // Decode common HTML entities
         const entities: Record<string, string> = {
@@ -392,7 +387,15 @@ class UrlTitleFetcher {
             '&quot;': '"',
             '&#39;': "'",
             '&apos;': "'",
-            '&nbsp;': ' '
+            '&nbsp;': ' ',
+            '&rsquo;': '\u2019',
+            '&lsquo;': '\u2018',
+            '&rdquo;': '\u201d',
+            '&ldquo;': '\u201c',
+            '&ndash;': '–',
+            '&mdash;': '—',
+            '&hellip;': '…',
+            '&bull;': '•'
         };
         
         let decoded = text;
@@ -487,7 +490,9 @@ class UrlTitleFetcher {
             
             const { body, status } = result;
             
-            // STEP 2: Detect bot protection (status codes OR content patterns)
+            // STEP 2: Detect bot protection
+            // Status codes 202/403/503 indicate protection even with empty body
+            // Content patterns catch Cloudflare/AWS WAF when status is 200
             const bodyLower = body.toLowerCase();
             const isBotProtectedStatus = status === 202 || status === 403 || status === 503;
             const isBotProtectedContent = bodyLower.includes('just a moment') || 
@@ -526,7 +531,7 @@ class UrlTitleFetcher {
                         return `[${title}](${url})`;
                     } catch (e) {
                         const errorMessage = e instanceof Error ? e.message : String(e);
-                        if (e instanceof Error && e.message === 'MICROLINK_RATE_LIMITED') {
+                        if (e instanceof MicrolinkRateLimitError) {
                             new Notice('⚠️ Microlink daily limit reached (50/day). Trying next fallback...', 5000);
                         }
                         lastError = errorMessage;
@@ -578,7 +583,8 @@ class UrlTitleFetcher {
         } catch (err: any) {
             // requestUrl throws on non-2xx status codes
             // Check if we got a 403/503/202 error response (likely bot protection)
-            // Note: Obsidian's error doesn't include .text, only .status and .headers
+            // Note: Obsidian's requestUrl doesn't provide response body for error statuses
+            // Return status code for bot detection - content check not needed
             if (err.status === 403 || err.status === 503 || err.status === 202) {
                 // Return status with empty body - bot detection will trigger on status alone
                 return {
@@ -650,7 +656,7 @@ class UrlTitleFetcher {
         
         // Check for rate limit (HTTP 429)
         if (res.status === 429) {
-            throw new Error('MICROLINK_RATE_LIMITED');
+            throw new MicrolinkRateLimitError();
         }
         
         let data: any;
@@ -663,7 +669,7 @@ class UrlTitleFetcher {
         // Check for rate limit in response body
         if (data.status === 'fail') {
             if (data.code === 'ERATE_LIMIT_EXCEEDED') {
-                throw new Error('MICROLINK_RATE_LIMITED');
+                throw new MicrolinkRateLimitError();
             }
             // Handle EPROXYNEEDED - Microlink free tier can't bypass antibot protection
             if (data.code === 'EPROXYNEEDED') {
