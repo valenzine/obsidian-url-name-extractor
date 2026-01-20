@@ -54,7 +54,7 @@ If no site-specific pattern matches, the plugin falls back to extracting from `<
 
 ## Known Limitations
 
-### Cloudflare and Bot Protection
+### Bot Protection
 
 Some websites use **Cloudflare** or other bot protection systems that prevent automated access. When encountering these sites, you'll see an error message:
 
@@ -69,14 +69,13 @@ This site cannot be accessed programmatically.
 - The plugin receives a challenge page instead of the actual content
 
 **Affected sites include:**
-- Sites behind Cloudflare protection (e.g., `comofuncionanlascos.as`)
-- Sites behind Cloudflare's "I'm Under Attack" mode
-- Sites with advanced bot detection
+- Sites behind Cloudflare protection
+- Sites with advanced bot detection or WAF (Web Application Firewall)
 
 **Workarounds:**
-1. **Enable Archive.org fallback** in settings - automatically fetches from archived snapshots
-2. Manually copy the title and format as `[Title](URL)`
-3. Open the URL in a browser, copy the title, then use the plugin on a placeholder
+1. **Enable Microlink fallback** in settings (recommended) - uses a headless browser service
+2. **Enable Archive.org fallback** in settings - fetches from archived snapshots
+3. Manually copy the title and format as `[Title](URL)`
 
 The plugin includes browser-like headers and a Google referer to minimize detection, but some sites will still block automated access.
 
@@ -87,6 +86,38 @@ When enabled in settings, the plugin will automatically attempt to fetch titles 
 - May use slightly outdated content (shows date of archived snapshot)
 - Adds a small delay while checking for archived versions
 - Won't work for very recent URLs that haven't been archived yet
+
+### Microlink Fallback
+
+When enabled in settings, the plugin uses [Microlink API](https://microlink.io) to fetch titles from protected sites. This is the **recommended fallback** for protected sites.
+
+**Features:**
+- More reliable than Archive.org for recent content
+- Works with most protected sites
+- No account required for free tier
+
+**Limitations:**
+- ⚠️ **Free tier: 50 requests/day** — when exhausted, falls back to Archive.org if enabled
+- URLs are sent to a third-party service (Microlink)
+- Optional API key field for users with paid plans
+
+### How Title Fetching Works
+
+The plugin tries to fetch titles in this order:
+
+1. **Direct fetch** — Attempts to fetch the page directly (no third-party services)
+2. **Fallback methods** (only if direct fetch fails due to bot protection):
+   - If both are enabled, uses the configured priority order
+   - **Microlink** — Uses a headless browser service (URLs sent to third-party)
+   - **Archive.org** — Uses archived snapshots (may be outdated)
+
+Both fallback methods are **disabled by default**. Enable them in settings if you frequently encounter protected sites.
+
+### Fallback Priority
+
+When both Archive.org and Microlink fallbacks are enabled, you can choose the priority order:
+- **Microlink → Archive.org** (recommended): More reliable for recent content
+- **Archive.org → Microlink** (privacy-focused): Tries non-profit Archive.org first
 
 ## Compilation
 
@@ -100,4 +131,4 @@ When enabled in settings, the plugin will automatically attempt to fetch titles 
 
 ## Credits
 
-Original plugin created by [zfei](https://github.com/zfei). This fork adds configurable regex patterns and improved URL detection.
+Original plugin created by [zfei](https://github.com/zfei). This fork adds configurable settings, multiple fallback methods for bot-protected sites, and improved URL handling.
