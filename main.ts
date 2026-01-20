@@ -8,12 +8,7 @@ class MicrolinkRateLimitError extends Error {
     }
 }
 
-class BotProtectionError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = 'BotProtectionError';
-    }
-}
+
 
 interface SitePattern {
     urlMatch: string;
@@ -300,7 +295,7 @@ class UrlTagger {
             
             // Add delay between requests (except for first one)
             if (i > 0) {
-                await new Promise(resolve => setTimeout(resolve, settings.requestDelay || 1000));
+                await new Promise(resolve => setTimeout(resolve, settings.requestDelay ?? 1000));
             }
             
             try {
@@ -400,7 +395,8 @@ class UrlTitleFetcher {
         
         let decoded = text;
         for (const [entity, char] of Object.entries(entities)) {
-            decoded = decoded.replace(new RegExp(entity, 'g'), char);
+            // Use split/join instead of replaceAll for ES6 compatibility
+            decoded = decoded.split(entity).join(char);
         }
         
         // Decode numeric entities (&#123; and &#xAB;)
@@ -421,7 +417,11 @@ class UrlTitleFetcher {
                         return this.decodeHtmlEntities(match[1].trim());
                     }
                 } catch (e) {
-                    new Notice(`Invalid regex for ${pattern.urlMatch}: ${e.message}`, 5000);
+                    if (e instanceof Error) {
+                        new Notice(`Invalid regex for ${pattern.urlMatch}: ${e.message}`, 5000);
+                    } else {
+                        new Notice(`Invalid regex for ${pattern.urlMatch}: ${String(e)}`, 5000);
+                    }
                 }
             }
         }
@@ -464,24 +464,16 @@ class UrlTitleFetcher {
         try {
             // STEP 1: Try simple fetch first (works for most sites including Amazon)
             let result: { body: string; status: number } | null = null;
-            let fetchError: any = null;
             
             try {
                 result = await this.fetchWithHeaders(reqUrl, false);
             } catch (simpleError) {
-                fetchError = simpleError;
                 // If simple fetch fails (network error), try with complex browser headers
                 try {
                     result = await this.fetchWithHeaders(reqUrl, true);
-                    fetchError = null;  // Success with complex headers
                 } catch (complexError) {
-                    fetchError = complexError;  // Both failed with network errors
+                    throw complexError;  // Both failed with network errors
                 }
-            }
-            
-            // If both fetch attempts failed with network errors, throw
-            if (fetchError) {
-                throw fetchError;
             }
             
             if (!result) {
@@ -548,7 +540,7 @@ class UrlTitleFetcher {
             const title = this.parseTitle(reqUrl, body, settings);
             return `[${title}](${url})`;
         } catch (error) {
-            const errorMsg = error.message || error.toString();
+            const errorMsg = error instanceof Error ? error.message : String(error);
             new Notice(`Error: ${errorMsg}`, 8000);
             return url;
         }
@@ -628,7 +620,14 @@ class UrlTitleFetcher {
         let archivedUrl = apiData.archived_snapshots.closest.url;
         // Fix http:// URLs from Archive.org to use https://
         if (archivedUrl.startsWith('http://')) {
-            archivedUrl = archivedUrl.replace('http://', 'https://');
+            try {
+                const parsedUrl = new URL(archivedUrl);
+                parsedUrl.protocol = 'https:';
+                archivedUrl = parsedUrl.toString();
+            } catch {
+                // Fallback: only replace the protocol at the start of the string
+                archivedUrl = archivedUrl.replace(/^http:\/\//, 'https://');
+            }
         }
         
         // Fetch the archived page
