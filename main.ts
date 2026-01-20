@@ -379,27 +379,46 @@ class UrlTitleFetcher {
             const cachedRedirect = this.redirectCache.get(reqUrl);
             const targetUrl = cachedRedirect || reqUrl;
             
-            const { finalUrl, body } = await this.fetchWithRedirects(
-                targetUrl,
-                settings,
-                0,
-                []
-            );
+            // STEP 1: Try simple fetch first (like url-namer does)
+            // This works for most sites including Amazon!
+            let fetchResult: { finalUrl: string; body: string; redirectChain: string[] };
+            try {
+                fetchResult = await this.fetchWithRedirects(
+                    targetUrl,
+                    settings,
+                    0,
+                    [],
+                    false  // Start with simple headers
+                );
+            } catch (simpleError) {
+                // If simple fetch fails, try with complex browser headers
+                // (for sites that require them)
+                fetchResult = await this.fetchWithRedirects(
+                    targetUrl,
+                    settings,
+                    0,
+                    [],
+                    true  // Use complex headers as fallback
+                );
+            }
+            
+            const { finalUrl, body } = fetchResult;
             
             // Cache the redirect mapping if we followed any redirects (with LRU eviction)
             if (finalUrl !== reqUrl && !cachedRedirect) {
                 this.addToCache(reqUrl, finalUrl);
             }
             
-            // Detect Cloudflare or other bot protection
+            // STEP 2: Detect bot protection (Cloudflare, AWS WAF, etc.)
             const bodyLower = body.toLowerCase();
             const isBlocked = bodyLower.includes('just a moment') || 
                 bodyLower.includes('checking your browser') ||
                 body.includes('challenge-platform') ||
+                body.includes('awsWafCookieDomainList') ||  // AWS WAF detection
                 (bodyLower.includes('cloudflare') && bodyLower.includes('ray id'));
             
             if (isBlocked) {
-                // Build fallback chain based on settings and priority
+                // STEP 3: Try fallback methods if bot protection detected
                 const fallbacks: Array<{name: string, fn: () => Promise<string>}> = [];
                 
                 if (settings.fallbackPriority === 'microlink-first') {
@@ -438,11 +457,12 @@ class UrlTitleFetcher {
                 
                 // All fallbacks failed or none enabled
                 if (fallbacks.length === 0) {
-                    throw new Error('⛔ Bot protection detected (Cloudflare/similar). Enable a fallback method in settings.');
+                    throw new Error('⛔ Bot protection detected. Enable a fallback method in settings.');
                 }
                 throw new Error(`⛔ Bot protection detected. All fallbacks failed. Last error: ${lastError}`);
             }
             
+            // STEP 4: Parse title from successful response
             const title = this.parseTitle(finalUrl, body, settings);
             // Use original URL in the markdown link, not the redirected URL
             return `[${title}](${url})`;
@@ -458,7 +478,8 @@ class UrlTitleFetcher {
         url: string,
         settings: UrlNameExtractorSettings,
         depth: number,
-        redirectChain: string[]
+        redirectChain: string[],
+        useComplexHeaders: boolean = false
     ): Promise<{ finalUrl: string; redirectChain: string[]; body: string }> {
         // Prevent infinite loops
         if (depth >= settings.maxRedirects) {
@@ -472,17 +493,21 @@ class UrlTitleFetcher {
             throw new Error(`Circular redirect detected. Chain: ${chain} → ${url}`);
         }
 
+        // Progressive complexity: Start with simple request (like url-namer)
+        // Only add complex headers if needed for bot protection
+        const headers = useComplexHeaders ? {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Referer': 'https://www.google.com/',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        } : undefined;
+
         const res = await requestUrl({ 
             url: url,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Referer': 'https://www.google.com/',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            }
+            headers: headers
         });
 
         // Handle redirects (3xx status codes)
@@ -519,7 +544,8 @@ class UrlTitleFetcher {
                 redirectUrl,
                 settings,
                 depth + 1,
-                [...redirectChain, url]
+                [...redirectChain, url],
+                useComplexHeaders
             );
         }
 
