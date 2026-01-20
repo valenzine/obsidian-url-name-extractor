@@ -532,7 +532,12 @@ class UrlTitleFetcher {
             throw new Error('Archive.org API unavailable');
         }
         
-        const apiData = JSON.parse(apiRes.text);
+        let apiData: any;
+        try {
+            apiData = JSON.parse(apiRes.text);
+        } catch (err: any) {
+            throw new Error(`Invalid JSON from Archive.org API: ${err?.message || 'Unknown parse error'}`);
+        }
         if (!apiData.archived_snapshots?.closest?.url) {
             throw new Error('No archived version found');
         }
