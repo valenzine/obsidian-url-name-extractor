@@ -721,9 +721,67 @@ class UrlTitleFetcher {
         if (data.status === 'success' && data.data?.title) {
             // Clean title: remove markdown links [text](url) and extract just the text
             let title = data.data.title;
-            // Remove markdown links: [text](url) → text
-            // Use non-greedy match and handle nested brackets by matching up to first closing bracket
-            title = title.replace(/\[([^\[\]]+)\]\([^\)]+\)/g, '$1');
+            // Remove markdown links: [text](url) → text, handling nested brackets in link text.
+            const stripMarkdownLinks = (input: string): string => {
+                let result = '';
+                let i = 0;
+                const len = input.length;
+
+                while (i < len) {
+                    const char = input[i];
+
+                    if (char === '[') {
+                        const linkStart = i;
+                        let depth = 1;
+                        let j = i + 1;
+
+                        // Find matching closing bracket for link text, supporting nested brackets.
+                        while (j < len && depth > 0) {
+                            if (input[j] === '[') {
+                                depth++;
+                            } else if (input[j] === ']') {
+                                depth--;
+                            }
+                            j++;
+                        }
+
+                        if (depth === 0 && j < len && input[j] === '(') {
+                            // We have something like [text](...).
+                            const textStart = linkStart + 1;
+                            const textEnd = j - 1;
+
+                            // Skip URL part inside parentheses (handle nested parentheses defensively).
+                            let parenDepth = 1;
+                            let k = j + 1;
+                            while (k < len && parenDepth > 0) {
+                                if (input[k] === '(') {
+                                    parenDepth++;
+                                } else if (input[k] === ')') {
+                                    parenDepth--;
+                                }
+                                k++;
+                            }
+
+                            // Append just the link text.
+                            result += input.slice(textStart, textEnd + 1);
+                            i = k; // Continue scanning after the closing parenthesis.
+                            continue;
+                        } else {
+                            // Not a markdown link; treat '[' as a normal character.
+                            result += char;
+                            i++;
+                            continue;
+                        }
+                    } else {
+                        result += char;
+                        i++;
+                    }
+                }
+
+                return result;
+            };
+
+            title = stripMarkdownLinks(title);
             return title;
         }
         
