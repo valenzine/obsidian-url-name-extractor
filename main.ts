@@ -373,28 +373,28 @@ class UrlTitleFetcher {
         }
     };
 
+    private static readonly htmlEntities: Record<string, string> = {
+        '&amp;': '&',
+        '&lt;': '<',
+        '&gt;': '>',
+        '&quot;': '"',
+        '&#39;': "'",
+        '&apos;': "'",
+        '&nbsp;': ' ',
+        '&rsquo;': '\u2019',
+        '&lsquo;': '\u2018',
+        '&rdquo;': '\u201d',
+        '&ldquo;': '\u201c',
+        '&ndash;': '–',
+        '&mdash;': '—',
+        '&hellip;': '…',
+        '&bull;': '•'
+    };
+
     static decodeHtmlEntities(text: string): string {
         // Decode common HTML entities
-        const entities: Record<string, string> = {
-            '&amp;': '&',
-            '&lt;': '<',
-            '&gt;': '>',
-            '&quot;': '"',
-            '&#39;': "'",
-            '&apos;': "'",
-            '&nbsp;': ' ',
-            '&rsquo;': '\u2019',
-            '&lsquo;': '\u2018',
-            '&rdquo;': '\u201d',
-            '&ldquo;': '\u201c',
-            '&ndash;': '–',
-            '&mdash;': '—',
-            '&hellip;': '…',
-            '&bull;': '•'
-        };
-        
         let decoded = text;
-        for (const [entity, char] of Object.entries(entities)) {
+        for (const [entity, char] of Object.entries(this.htmlEntities)) {
             // Use split/join instead of replaceAll for ES6 compatibility
             decoded = decoded.split(entity).join(char);
         }
