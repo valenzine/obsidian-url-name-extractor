@@ -14,6 +14,7 @@ interface UrlNameExtractorSettings {
     fallbackPriority: 'archive-first' | 'microlink-first';
     followRedirects: boolean;
     maxRedirects: number;
+    requestDelay: number;
 }
 
 const DEFAULT_SETTINGS: UrlNameExtractorSettings = {
@@ -24,7 +25,8 @@ const DEFAULT_SETTINGS: UrlNameExtractorSettings = {
     microlinkApiKey: '',
     fallbackPriority: 'microlink-first',
     followRedirects: true,
-    maxRedirects: 5
+    maxRedirects: 5,
+    requestDelay: 1000  // 1 second delay between bulk requests to avoid rate limiting
 };
 
 export default class UrlNamer extends Plugin {
@@ -190,6 +192,18 @@ class UrlNameExtractorSettingTab extends PluginSettingTab {
         }
 
         new Setting(containerEl)
+            .setName('Delay between bulk requests')
+            .setDesc('Milliseconds to wait between requests when processing multiple URLs. Helps avoid rate limiting. (Default: 1000ms = 1 second)')
+            .addSlider(slider => slider
+                .setLimits(0, 5000, 100)
+                .setValue(this.plugin.settings.requestDelay)
+                .setDynamicTooltip()
+                .onChange(async (value) => {
+                    this.plugin.settings.requestDelay = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
             .setName('Follow HTTP redirects')
             .setDesc('Automatically follow redirects (301, 302, etc.) when fetching page titles. Disable if you only want to fetch from the exact URL provided.')
             .addToggle(toggle => toggle
@@ -241,7 +255,6 @@ class MsgModal extends Modal {
 class UrlTagger {
 
     static async getTaggedText(selectedText: string, settings: UrlNameExtractorSettings) {
-        const promises: any[] = [];
         const urlsToProcess: string[] = [];
         
         let urlPattern: RegExp;
@@ -265,8 +278,6 @@ class UrlTagger {
             
             if (!isInMarkdownLink) {
                 urlsToProcess.push(url);
-                const promise = UrlTitleFetcher.getNamedUrlTag(url, settings);
-                promises.push(promise);
             }
         }
 
@@ -275,14 +286,62 @@ class UrlTagger {
             return selectedText;
         }
 
-        const namedTags = await Promise.all(promises);
+        // Process URLs sequentially with delay to avoid rate limiting
+        const namedTags: string[] = [];
+        for (let i = 0; i < urlsToProcess.length; i++) {
+            const url = urlsToProcess[i];
+            
+            // Add delay between requests (except for first one)
+            if (i > 0) {
+                await new Promise(resolve => setTimeout(resolve, settings.requestDelay || 1000));
+            }
+            
+            try {
+                const namedTag = await UrlTitleFetcher.getNamedUrlTag(url, settings);
+                namedTags.push(namedTag);
+            } catch (error) {
+                // On error, keep the original URL
+                const errorMsg = error instanceof Error ? error.message : String(error);
+                new Notice(`Failed to fetch title for ${url}: ${errorMsg}`, 5000);
+                namedTags.push(url);
+            }
+        }
 
         new Notice(`Processed ${namedTags.length} urls.`);
 
         // Replace URLs with their named versions
+        // Important: Can't use simple replace() because it only replaces first occurrence
+        // and URLs might share prefixes (e.g., example.com/ and example.com/page)
+        // Instead, track original match positions and replace in reverse order
         let result = selectedText;
-        urlsToProcess.forEach((url, index) => {
-            result = result.replace(url, namedTags[index]);
+        
+        // Build array of replacements with their original positions
+        const replacements: Array<{start: number, end: number, replacement: string}> = [];
+        let replaceMatch;
+        const replacePattern = new RegExp(settings.urlRegex, 'gim');
+        let processedIndex = 0;
+        
+        while ((replaceMatch = replacePattern.exec(selectedText)) !== null) {
+            const url = replaceMatch[0];
+            const matchIndex = replaceMatch.index;
+            
+            // Check if URL is already in markdown link
+            const beforeUrl = selectedText.substring(Math.max(0, matchIndex - 2), matchIndex);
+            const isInMarkdownLink = beforeUrl === '](';
+            
+            if (!isInMarkdownLink && processedIndex < namedTags.length) {
+                replacements.push({
+                    start: matchIndex,
+                    end: matchIndex + url.length,
+                    replacement: namedTags[processedIndex]
+                });
+                processedIndex++;
+            }
+        }
+        
+        // Apply replacements in reverse order (end to start) to preserve positions
+        replacements.reverse().forEach(({ start, end, replacement }) => {
+            result = result.substring(0, start) + replacement + result.substring(end);
         });
 
         return result;
@@ -324,6 +383,30 @@ class UrlTitleFetcher {
         this.redirectCache.set(key, value);
     }
 
+    static decodeHtmlEntities(text: string): string {
+        // Decode common HTML entities
+        const entities: Record<string, string> = {
+            '&amp;': '&',
+            '&lt;': '<',
+            '&gt;': '>',
+            '&quot;': '"',
+            '&#39;': "'",
+            '&apos;': "'",
+            '&nbsp;': ' '
+        };
+        
+        let decoded = text;
+        for (const [entity, char] of Object.entries(entities)) {
+            decoded = decoded.replace(new RegExp(entity, 'g'), char);
+        }
+        
+        // Decode numeric entities (&#123; and &#xAB;)
+        decoded = decoded.replace(/&#(\d+);/g, (match, dec) => String.fromCharCode(parseInt(dec, 10)));
+        decoded = decoded.replace(/&#x([0-9A-Fa-f]+);/g, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
+        
+        return decoded;
+    }
+
     static parseTitle(url: string, body: string, settings: UrlNameExtractorSettings): string {
         // Check site-specific patterns first
         for (const pattern of settings.sitePatterns) {
@@ -332,7 +415,7 @@ class UrlTitleFetcher {
                     const regex = new RegExp(pattern.titleRegex, 'im');
                     const match = body.match(regex);
                     if (match && typeof match[1] === 'string' && match[1].trim()) {
-                        return match[1].trim();
+                        return this.decodeHtmlEntities(match[1].trim());
                     }
                 } catch (e) {
                     new Notice(`Invalid regex for ${pattern.urlMatch}: ${e.message}`, 5000);
@@ -363,7 +446,8 @@ class UrlTitleFetcher {
             throw new Error('Unable to parse the title tag (empty or not found)');
         }
 
-        return title;
+        // Decode HTML entities
+        return this.decodeHtmlEntities(title);
     }
 
     static async getNamedUrlTag(url: string, settings: UrlNameExtractorSettings): Promise<string> {
@@ -375,50 +459,47 @@ class UrlTitleFetcher {
         }
 
         try {
-            // Check redirect cache first
-            const cachedRedirect = this.redirectCache.get(reqUrl);
-            const targetUrl = cachedRedirect || reqUrl;
+            // STEP 1: Try simple fetch first (works for most sites including Amazon)
+            let result: { body: string; status: number } | null = null;
+            let fetchError: any = null;
             
-            // STEP 1: Try simple fetch first (like url-namer does)
-            // This works for most sites including Amazon!
-            let fetchResult: { finalUrl: string; body: string; redirectChain: string[] };
             try {
-                fetchResult = await this.fetchWithRedirects(
-                    targetUrl,
-                    settings,
-                    0,
-                    [],
-                    false  // Start with simple headers
-                );
+                result = await this.fetchWithHeaders(reqUrl, false);
             } catch (simpleError) {
-                // If simple fetch fails, try with complex browser headers
-                // (for sites that require them)
-                fetchResult = await this.fetchWithRedirects(
-                    targetUrl,
-                    settings,
-                    0,
-                    [],
-                    true  // Use complex headers as fallback
-                );
+                fetchError = simpleError;
+                // If simple fetch fails (network error), try with complex browser headers
+                try {
+                    result = await this.fetchWithHeaders(reqUrl, true);
+                    fetchError = null;  // Success with complex headers
+                } catch (complexError) {
+                    fetchError = complexError;  // Both failed with network errors
+                }
             }
             
-            const { finalUrl, body } = fetchResult;
-            
-            // Cache the redirect mapping if we followed any redirects (with LRU eviction)
-            if (finalUrl !== reqUrl && !cachedRedirect) {
-                this.addToCache(reqUrl, finalUrl);
+            // If both fetch attempts failed with network errors, throw
+            if (fetchError) {
+                throw fetchError;
             }
             
-            // STEP 2: Detect bot protection (Cloudflare, AWS WAF, etc.)
+            if (!result) {
+                throw new Error('Failed to fetch URL');
+            }
+            
+            const { body, status } = result;
+            
+            // STEP 2: Detect bot protection (status codes OR content patterns)
             const bodyLower = body.toLowerCase();
-            const isBlocked = bodyLower.includes('just a moment') || 
+            const isBotProtectedStatus = status === 202 || status === 403 || status === 503;
+            const isBotProtectedContent = bodyLower.includes('just a moment') || 
                 bodyLower.includes('checking your browser') ||
                 body.includes('challenge-platform') ||
-                body.includes('awsWafCookieDomainList') ||  // AWS WAF detection
+                body.includes('awsWafCookieDomainList') ||
                 (bodyLower.includes('cloudflare') && bodyLower.includes('ray id'));
             
+            const isBlocked = isBotProtectedStatus || isBotProtectedContent;
+            
             if (isBlocked) {
-                // STEP 3: Try fallback methods if bot protection detected
+                // Build fallback chain
                 const fallbacks: Array<{name: string, fn: () => Promise<string>}> = [];
                 
                 if (settings.fallbackPriority === 'microlink-first') {
@@ -437,7 +518,6 @@ class UrlTitleFetcher {
                     }
                 }
                 
-                // Try fallbacks in order
                 let lastError = '';
                 for (const fallback of fallbacks) {
                     try {
@@ -446,53 +526,33 @@ class UrlTitleFetcher {
                         return `[${title}](${url})`;
                     } catch (e) {
                         const errorMessage = e instanceof Error ? e.message : String(e);
-                        // If Microlink rate limited, show specific notice
                         if (e instanceof Error && e.message === 'MICROLINK_RATE_LIMITED') {
                             new Notice('⚠️ Microlink daily limit reached (50/day). Trying next fallback...', 5000);
                         }
                         lastError = errorMessage;
-                        // Continue to next fallback
                     }
                 }
                 
-                // All fallbacks failed or none enabled
                 if (fallbacks.length === 0) {
                     throw new Error('⛔ Bot protection detected. Enable a fallback method in settings.');
                 }
                 throw new Error(`⛔ Bot protection detected. All fallbacks failed. Last error: ${lastError}`);
             }
             
-            // STEP 4: Parse title from successful response
-            const title = this.parseTitle(finalUrl, body, settings);
-            // Use original URL in the markdown link, not the redirected URL
+            // STEP 3: Parse title from successful response
+            const title = this.parseTitle(reqUrl, body, settings);
             return `[${title}](${url})`;
         } catch (error) {
-            // If it's already a specific error message, use it
             const errorMsg = error.message || error.toString();
             new Notice(`Error: ${errorMsg}`, 8000);
             return url;
         }
     }
 
-    private static async fetchWithRedirects(
+    private static async fetchWithHeaders(
         url: string,
-        settings: UrlNameExtractorSettings,
-        depth: number,
-        redirectChain: string[],
         useComplexHeaders: boolean = false
-    ): Promise<{ finalUrl: string; redirectChain: string[]; body: string }> {
-        // Prevent infinite loops
-        if (depth >= settings.maxRedirects) {
-            const chain = redirectChain.join(' → ');
-            throw new Error(`Too many redirects (${depth}). Chain: ${chain} → ${url}`);
-        }
-
-        // Detect circular redirects
-        if (redirectChain.includes(url)) {
-            const chain = redirectChain.join(' → ');
-            throw new Error(`Circular redirect detected. Chain: ${chain} → ${url}`);
-        }
-
+    ): Promise<{ body: string; status: number }> {
         // Progressive complexity: Start with simple request (like url-namer)
         // Only add complex headers if needed for bot protection
         const headers = useComplexHeaders ? {
@@ -505,62 +565,30 @@ class UrlTitleFetcher {
             'Upgrade-Insecure-Requests': '1'
         } : undefined;
 
-        const res = await requestUrl({ 
-            url: url,
-            headers: headers
-        });
+        try {
+            const res = await requestUrl({ 
+                url: url,
+                headers: headers
+            });
 
-        // Handle redirects (3xx status codes)
-        if (res.status >= 300 && res.status < 400) {
-            if (!settings.followRedirects) {
-                const location = res.headers['location'] || res.headers['Location'] || 'unknown';
-                throw new Error(`Redirect detected (${res.status}) to: ${location}. Enable redirect following in settings.`);
+            return {
+                body: res.text,
+                status: res.status
+            };
+        } catch (err: any) {
+            // requestUrl throws on non-2xx status codes
+            // Check if we got a 403/503/202 error response (likely bot protection)
+            // Note: Obsidian's error doesn't include .text, only .status and .headers
+            if (err.status === 403 || err.status === 503 || err.status === 202) {
+                // Return status with empty body - bot detection will trigger on status alone
+                return {
+                    body: '',
+                    status: err.status
+                };
             }
-
-            const location = res.headers['location'] || res.headers['Location'];
-            if (!location) {
-                const chain = redirectChain.length > 0 ? ` Chain: ${redirectChain.join(' → ')} → ${url}` : '';
-                throw new Error(`Redirect (${res.status}) without Location header.${chain}`);
-            }
-
-            // Resolve relative URLs
-            let redirectUrl: string;
-            try {
-                redirectUrl = location.startsWith('http') 
-                    ? location 
-                    : new URL(location, url).toString();
-            } catch (e) {
-                throw new Error(`Invalid redirect URL: ${location}`);
-            }
-
-            // Block HTTPS → HTTP protocol downgrade for security
-            if (url.startsWith('https://') && redirectUrl.startsWith('http://')) {
-                const chain = redirectChain.length > 0 ? ` Chain: ${redirectChain.join(' → ')} → ${url}` : '';
-                throw new Error(`Insecure redirect from HTTPS to HTTP blocked.${chain}`);
-            }
-
-            // Follow the redirect
-            return await this.fetchWithRedirects(
-                redirectUrl,
-                settings,
-                depth + 1,
-                [...redirectChain, url],
-                useComplexHeaders
-            );
+            // Other error statuses or real network errors, re-throw
+            throw err;
         }
-
-        // Handle non-2xx responses
-        if (res.status < 200 || res.status >= 300) {
-            const chain = redirectChain.length > 0 ? ` Chain: ${redirectChain.join(' → ')} → ${url}` : '';
-            throw new Error(`HTTP ${res.status}${chain}`);
-        }
-
-        // Success - return the final URL, redirect chain, and body
-        return {
-            finalUrl: url,
-            redirectChain: redirectChain,
-            body: res.text
-        };
     }
 
     static async tryArchiveFallback(url: string, settings: UrlNameExtractorSettings): Promise<string> {
@@ -591,7 +619,11 @@ class UrlTitleFetcher {
             throw new Error('No archived version found');
         }
         
-        const archivedUrl = apiData.archived_snapshots.closest.url;
+        let archivedUrl = apiData.archived_snapshots.closest.url;
+        // Fix http:// URLs from Archive.org to use https://
+        if (archivedUrl.startsWith('http://')) {
+            archivedUrl = archivedUrl.replace('http://', 'https://');
+        }
         
         // Fetch the archived page
         const archiveRes = await requestUrl({ url: archivedUrl });
@@ -633,11 +665,19 @@ class UrlTitleFetcher {
             if (data.code === 'ERATE_LIMIT_EXCEEDED') {
                 throw new Error('MICROLINK_RATE_LIMITED');
             }
+            // Handle EPROXYNEEDED - Microlink free tier can't bypass antibot protection
+            if (data.code === 'EPROXYNEEDED') {
+                throw new Error('Microlink free tier cannot bypass antibot protection (upgrade to PRO or try Archive.org)');
+            }
             throw new Error(`Microlink error: ${data.message || data.code || 'Unknown error'}`);
         }
         
         if (data.status === 'success' && data.data?.title) {
-            return data.data.title;
+            // Clean title: remove markdown links [text](url) and extract just the text
+            let title = data.data.title;
+            // Remove markdown links: [text](url) → text
+            title = title.replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1');
+            return title;
         }
         
         throw new Error('Microlink: No title found in response');
