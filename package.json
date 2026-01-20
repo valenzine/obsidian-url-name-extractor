@@ -1,6 +1,6 @@
 {
 	"name": "url-name-extractor",
-	"version": "2.0.2",
+	"version": "2.0.3",
 	"description": "Converts raw URLs into markdown links by automatically fetching webpage titles. Configurable regex patterns for URL detection and site-specific title extraction.",
 	"main": "main.js",
 	"repository": {

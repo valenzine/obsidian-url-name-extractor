@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.0.3
+
+- Fix: Sequential processing with configurable delay prevents rate limiting when processing multiple URLs
+- Fix: Bot protection detection improved - handles HTTP 202/403/503 status codes and Cloudflare/AWS WAF content patterns
+- Fix: URL replacement bug that caused malformed markdown when processing overlapping URLs (e.g., example.com/ and example.com/page)
+- Add: Configurable delay between bulk requests (default 1 second, adjustable 0-5 seconds in settings)
+- Add: HTML entity decoding for titles - supports basic entities, typographic quotes, dashes, and numeric entities
+- Add: Settings validation to ensure safe values on load
+- Enhancement: Success/failure reporting shows accurate counts for processed URLs
+- Removed: Custom redirect handling (~100 lines) and redirect settings UI - Obsidian's requestUrl handles this automatically
+- Code Quality: Custom error classes for better error handling, removed unused cache code
+
 ## 2.0.2
 
 - Add: Microlink API fallback for Cloudflare-protected sites (Medium, custom domains)
