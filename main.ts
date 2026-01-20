@@ -404,11 +404,12 @@ class UrlTitleFetcher {
                         new Notice(`📦 Title fetched via ${fallback.name}`, 3000);
                         return `[${title}](${url})`;
                     } catch (e) {
+                        const errorMessage = e instanceof Error ? e.message : String(e);
                         // If Microlink rate limited, show specific notice
-                        if (e.message === 'MICROLINK_RATE_LIMITED') {
+                        if (e instanceof Error && e.message === 'MICROLINK_RATE_LIMITED') {
                             new Notice('⚠️ Microlink daily limit reached (50/day). Trying next fallback...', 5000);
                         }
-                        lastError = e.message;
+                        lastError = errorMessage;
                         // Continue to next fallback
                     }
                 }
