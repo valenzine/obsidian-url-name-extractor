@@ -293,8 +293,16 @@ class UrlTagger {
 class UrlTitleFetcher {
 
     static htmlTitlePattern = /<title[^>]*>([^<]*)<\/title>/im;
-    static ogTitlePattern = /<meta\s+property=["']og:title["']\s+content=["']([^"']*)["']/im;
+    // Multiple OG title patterns to handle attribute order variations
+    static ogTitlePatterns = [
+        /<meta\s+property=["']og:title["']\s+content=["']([^"']*)["']/im,
+        /<meta\s+content=["']([^"']*)["']\s+property=["']og:title["']/im,
+        /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']*)["']/im,
+        /<meta[^>]+content=["']([^"']*)["'][^>]+property=["']og:title["']/im
+    ];
+    // LRU-style cache with size limit
     static redirectCache: Map<string, string> = new Map();
+    static readonly MAX_CACHE_SIZE = 500;
 
     static isValidUrl(s: string): boolean {
         try {
@@ -304,6 +312,17 @@ class UrlTitleFetcher {
             return false;
         }
     };
+
+    // Cache management with LRU eviction
+    private static addToCache(key: string, value: string): void {
+        // If cache is full, remove oldest entries (first 10%)
+        if (this.redirectCache.size >= this.MAX_CACHE_SIZE) {
+            const keysToDelete = Array.from(this.redirectCache.keys())
+                .slice(0, Math.floor(this.MAX_CACHE_SIZE * 0.1));
+            keysToDelete.forEach(k => this.redirectCache.delete(k));
+        }
+        this.redirectCache.set(key, value);
+    }
 
     static parseTitle(url: string, body: string, settings: UrlNameExtractorSettings): string {
         // Check site-specific patterns first
@@ -328,11 +347,14 @@ class UrlTitleFetcher {
             title = titleMatch[1].trim();
         }
 
-        // If title is empty, try Open Graph title meta tag
+        // If title is empty, try Open Graph title meta tags (multiple patterns for attribute order variations)
         if (!title) {
-            const ogMatch = body.match(this.ogTitlePattern);
-            if (ogMatch && typeof ogMatch[1] === 'string') {
-                title = ogMatch[1].trim();
+            for (const pattern of this.ogTitlePatterns) {
+                const ogMatch = body.match(pattern);
+                if (ogMatch && typeof ogMatch[1] === 'string' && ogMatch[1].trim()) {
+                    title = ogMatch[1].trim();
+                    break;
+                }
             }
         }
 
@@ -364,9 +386,9 @@ class UrlTitleFetcher {
                 []
             );
             
-            // Cache the redirect mapping if we followed any redirects
+            // Cache the redirect mapping if we followed any redirects (with LRU eviction)
             if (finalUrl !== reqUrl && !cachedRedirect) {
-                this.redirectCache.set(reqUrl, finalUrl);
+                this.addToCache(reqUrl, finalUrl);
             }
             
             // Detect Cloudflare or other bot protection
@@ -555,14 +577,18 @@ class UrlTitleFetcher {
     }
 
     static async tryMicrolinkFallback(url: string, settings: UrlNameExtractorSettings): Promise<string> {
-        let apiUrl = `https://api.microlink.io?url=${encodeURIComponent(url)}`;
+        const apiUrl = `https://api.microlink.io?url=${encodeURIComponent(url)}`;
         
-        // Add API key if provided
+        // Build headers, using x-api-key for authentication (more secure than URL parameter)
+        const headers: Record<string, string> = {};
         if (settings.microlinkApiKey) {
-            apiUrl += `&apiKey=${encodeURIComponent(settings.microlinkApiKey)}`;
+            headers['x-api-key'] = settings.microlinkApiKey;
         }
         
-        const res = await requestUrl({ url: apiUrl });
+        const res = await requestUrl({ 
+            url: apiUrl,
+            headers: Object.keys(headers).length > 0 ? headers : undefined
+        });
         
         // Check for rate limit (HTTP 429)
         if (res.status === 429) {
