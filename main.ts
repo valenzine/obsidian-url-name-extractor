@@ -438,7 +438,7 @@ class UrlTitleFetcher {
         redirectChain: string[]
     ): Promise<{ finalUrl: string; redirectChain: string[]; body: string }> {
         // Prevent infinite loops
-        if (depth > settings.maxRedirects) {
+        if (depth >= settings.maxRedirects) {
             const chain = redirectChain.join(' → ');
             throw new Error(`Too many redirects (${depth}). Chain: ${chain} → ${url}`);
         }
