@@ -399,9 +399,33 @@ class UrlTitleFetcher {
             decoded = decoded.split(entity).join(char);
         }
         
-        // Decode numeric entities (&#123; and &#xAB;)
-        decoded = decoded.replace(/&#(\d+);/g, (match, dec) => String.fromCharCode(parseInt(dec, 10)));
-        decoded = decoded.replace(/&#x([0-9A-Fa-f]+);/g, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
+        // Helper to safely convert a numeric code point to a string
+        const codePointToString = (codePoint: number): string => {
+            if (!Number.isFinite(codePoint) || codePoint < 0 || codePoint > 0x10FFFF) {
+                // Invalid Unicode code point; return empty string
+                return '';
+            }
+            // Use fromCodePoint for proper Unicode support including supplementary characters
+            if (typeof String.fromCodePoint === 'function') {
+                return String.fromCodePoint(codePoint);
+            }
+            // Fallback for older environments: only handle Basic Multilingual Plane
+            if (codePoint <= 0xFFFF) {
+                return String.fromCharCode(codePoint);
+            }
+            // Cannot safely represent supplementary characters without fromCodePoint
+            return '';
+        };
+        
+        // Decode numeric entities (&#123; and &#xAB;) with validation
+        decoded = decoded.replace(/&#(\d+);/g, (match, dec) => {
+            const value = parseInt(dec, 10);
+            return codePointToString(value);
+        });
+        decoded = decoded.replace(/&#x([0-9A-Fa-f]+);/g, (match, hex) => {
+            const value = parseInt(hex, 16);
+            return codePointToString(value);
+        });
         
         return decoded;
     }
@@ -468,11 +492,20 @@ class UrlTitleFetcher {
             try {
                 result = await this.fetchWithHeaders(reqUrl, false);
             } catch (simpleError) {
-                // If simple fetch fails (network error), try with complex browser headers
+                // If simple fetch fails (network error), log it and try with complex browser headers
+                console.error('Simple fetchWithHeaders call failed:', simpleError);
                 try {
                     result = await this.fetchWithHeaders(reqUrl, true);
                 } catch (complexError) {
-                    throw complexError;  // Both failed with network errors
+                    // Both failed - aggregate error information from both attempts
+                    const aggregatedMessage = 
+                        'Both simple and complex fetchWithHeaders calls failed. ' +
+                        `Simple fetch error: ${simpleError instanceof Error ? simpleError.message : String(simpleError)}. ` +
+                        `Complex fetch error: ${complexError instanceof Error ? complexError.message : String(complexError)}.`;
+                    const aggregatedError = new Error(aggregatedMessage);
+                    (aggregatedError as any).simpleError = simpleError;
+                    (aggregatedError as any).complexError = complexError;
+                    throw aggregatedError;
                 }
             }
             
@@ -485,13 +518,17 @@ class UrlTitleFetcher {
             // STEP 2: Detect bot protection
             // Status codes 202/403/503 indicate protection even with empty body
             // Content patterns catch Cloudflare/AWS WAF when status is 200
-            const bodyLower = body.toLowerCase();
             const isBotProtectedStatus = status === 202 || status === 403 || status === 503;
-            const isBotProtectedContent = bodyLower.includes('just a moment') || 
-                bodyLower.includes('checking your browser') ||
-                body.includes('challenge-platform') ||
-                body.includes('awsWafCookieDomainList') ||
-                (bodyLower.includes('cloudflare') && bodyLower.includes('ray id'));
+            
+            // Only check content if status doesn't already indicate bot protection
+            const isBotProtectedContent = !isBotProtectedStatus && (() => {
+                const bodyLower = body.toLowerCase();
+                return bodyLower.includes('just a moment') || 
+                    bodyLower.includes('checking your browser') ||
+                    body.includes('challenge-platform') ||
+                    body.includes('awsWafCookieDomainList') ||
+                    (bodyLower.includes('cloudflare') && bodyLower.includes('ray id'));
+            })();
             
             const isBlocked = isBotProtectedStatus || isBotProtectedContent;
             
@@ -577,11 +614,15 @@ class UrlTitleFetcher {
             // Check if we got a 403/503/202 error response (likely bot protection)
             // Note: Obsidian's requestUrl doesn't provide response body for error statuses
             // Return status code for bot detection - content check not needed
-            if (err.status === 403 || err.status === 503 || err.status === 202) {
+            const status = (err && typeof err === 'object' && 'status' in err && typeof (err as any).status === 'number')
+                ? (err as any).status as number
+                : undefined;
+                
+            if (status === 403 || status === 503 || status === 202) {
                 // Return status with empty body - bot detection will trigger on status alone
                 return {
                     body: '',
-                    status: err.status
+                    status: status
                 };
             }
             // Other error statuses or real network errors, re-throw
@@ -681,7 +722,8 @@ class UrlTitleFetcher {
             // Clean title: remove markdown links [text](url) and extract just the text
             let title = data.data.title;
             // Remove markdown links: [text](url) → text
-            title = title.replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1');
+            // Use non-greedy match and handle nested brackets by matching up to first closing bracket
+            title = title.replace(/\[([^\[\]]+)\]\([^\)]+\)/g, '$1');
             return title;
         }
         
