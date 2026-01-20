@@ -6,13 +6,12 @@ This is a plugin for Obsidian (https://obsidian.md) that retrieves HTML titles t
 
 ## What's New in This Fork
 
-- **Improved URL detection**: Liberal regex pattern that correctly handles all valid URLs including:
-  - Domains with any valid TLD (`.as`, `.museum`, `.technology`, etc.)
-  - DOI links (`https://doi.org/10.xxxx/yyyy`)
-  - Blog posts and academic articles from various platforms
+- **Improved URL detection**: Liberal regex pattern that correctly handles all valid URLs including domains with any valid TLD, DOI links, and academic article URLs
+- **Progressive complexity**: Smart request strategy that tries simple approaches first, only adding complexity when needed to avoid triggering anti-bot systems
 - **Configurable URL regex**: Customize the URL matching pattern in plugin settings
-- **Site-specific title extraction**: Define custom title regex patterns for websites with non-standard HTML (e.g., lazy-loaded content)
-- **Better error handling**: Clear error messages when regex validation fails
+- **Site-specific title extraction**: Define custom title regex patterns for websites with non-standard HTML
+- **Multiple fallback methods**: Archive.org and Microlink API support for bot-protected sites
+- **Better error handling**: Clear error messages and graceful degradation
 
 ## Usage
 
@@ -56,28 +55,25 @@ If no site-specific pattern matches, the plugin falls back to extracting from `<
 
 ### Bot Protection
 
-Some websites use **Cloudflare** or other bot protection systems that prevent automated access. When encountering these sites, you'll see an error message:
+Some websites use Cloudflare, AWS WAF, or other bot protection systems. The plugin handles these cases through its progressive approach:
 
+1. Attempts simple request (avoids triggering protection)
+2. Falls back to browser emulation if needed
+3. Uses external services if bot protection is detected
+
+**Common protection systems:**
+- Cloudflare challenge pages
+- AWS WAF cookie challenges
+- JavaScript-based bot detection
+
+**When you'll see errors:**
+If bot protection is detected and no fallback methods are enabled:
 ```
-Error fetching title for [URL]: Bot protection detected (likely Cloudflare). 
-This site cannot be accessed programmatically.
+Error: Bot protection detected. Enable a fallback method in settings.
 ```
 
-**Why this happens:**
-- These protection systems require JavaScript execution and browser-like behavior
-- The plugin uses simple HTTP requests which are detected as bots
-- The plugin receives a challenge page instead of the actual content
-
-**Affected sites include:**
-- Sites behind Cloudflare protection
-- Sites with advanced bot detection or WAF (Web Application Firewall)
-
-**Workarounds:**
-1. **Enable Microlink fallback** in settings (recommended) - uses a headless browser service
-2. **Enable Archive.org fallback** in settings - fetches from archived snapshots
-3. Manually copy the title and format as `[Title](URL)`
-
-The plugin includes browser-like headers and a Google referer to minimize detection, but some sites will still block automated access.
+**Recommended approach:**
+Enable Microlink fallback in settings for the most reliable experience with protected sites.
 
 ### Archive.org Fallback
 
@@ -103,13 +99,20 @@ When enabled in settings, the plugin uses [Microlink API](https://microlink.io) 
 
 ### How Title Fetching Works
 
-The plugin tries to fetch titles in this order:
+The plugin uses a progressive complexity approach to maximize compatibility:
 
-1. **Direct fetch** — Attempts to fetch the page directly (no third-party services)
-2. **Fallback methods** (only if direct fetch fails due to bot protection):
-   - If both are enabled, uses the configured priority order
-   - **Microlink** — Uses a headless browser service (URLs sent to third-party)
-   - **Archive.org** — Uses archived snapshots (may be outdated)
+1. **Simple request** — Clean HTTP request with minimal headers
+   - Works for the majority of websites
+   - Avoids triggering anti-bot systems
+   - Faster response times
+
+2. **Complex browser emulation** — Full browser-like headers if simple request fails
+   - User-Agent, Accept, Referer, and other browser headers
+   - Used automatically when simple approach doesn't work
+
+3. **External fallback services** — When bot protection is detected:
+   - **Microlink API** — Headless browser service (requires sending URLs to third-party)
+   - **Archive.org** — Wayback Machine archived snapshots
 
 Both fallback methods are **disabled by default**. Enable them in settings if you frequently encounter protected sites.
 
@@ -118,6 +121,28 @@ Both fallback methods are **disabled by default**. Enable them in settings if yo
 When both Archive.org and Microlink fallbacks are enabled, you can choose the priority order:
 - **Microlink → Archive.org** (recommended): More reliable for recent content
 - **Archive.org → Microlink** (privacy-focused): Tries non-profit Archive.org first
+
+## Troubleshooting
+
+### URLs aren't being detected
+
+Check your URL regex pattern in settings. The default pattern requires `http://` or `https://` prefix:
+```regex
+https?:\/\/[^\s\]\)]+
+```
+
+The plugin automatically skips URLs already in markdown links `[text](url)`.
+
+### Microlink rate limit errors
+
+The free tier of Microlink allows 50 requests per day. When this limit is reached:
+1. Error message: "Microlink daily limit reached (50/day)"
+2. Plugin automatically tries Archive.org fallback if enabled
+3. Consider adding an API key in settings for higher limits
+
+### Site-specific issues
+
+For websites with non-standard HTML or lazy-loaded titles, configure site-specific patterns in settings. See the Site-Specific Title Patterns section above.
 
 ## Compilation
 

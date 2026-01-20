@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.0.3
+
+- Fix: Amazon.com and AWS WAF-protected sites now work correctly
+- Enhancement: Progressive complexity approach - tries simple requests first, only uses complex headers as fallback
+- Enhancement: Added AWS WAF challenge page detection
+- Performance: Faster and more reliable for most sites by avoiding unnecessary header complexity
+- Technical: Simple default headers prevent triggering anti-bot systems like AWS WAF
+
 ## 2.0.2
 
 - Add: Microlink API fallback for Cloudflare-protected sites (Medium, custom domains)
