@@ -357,7 +357,7 @@ class UrlTitleFetcher {
             const cachedRedirect = this.redirectCache.get(reqUrl);
             const targetUrl = cachedRedirect || reqUrl;
             
-            const { finalUrl, redirectChain, body } = await this.fetchWithRedirects(
+            const { finalUrl, body } = await this.fetchWithRedirects(
                 targetUrl,
                 settings,
                 0,
