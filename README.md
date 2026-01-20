@@ -105,6 +105,7 @@ The plugin uses a progressive complexity approach to maximize compatibility:
    - Works for the majority of websites
    - Avoids triggering anti-bot systems
    - Faster response times
+   - Obsidian's requestUrl automatically handles HTTP redirects (301, 302, etc.)
 
 2. **Complex browser emulation** — Full browser-like headers if simple request fails
    - User-Agent, Accept, Referer, and other browser headers
@@ -115,6 +116,15 @@ The plugin uses a progressive complexity approach to maximize compatibility:
    - **Archive.org** — Wayback Machine archived snapshots
 
 Both fallback methods are **disabled by default**. Enable them in settings if you frequently encounter protected sites.
+
+### HTML Entity Decoding
+
+Page titles are automatically decoded for common HTML entities:
+- Basic entities: `&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, `&nbsp;`
+- Typographic quotes: `&rsquo;`, `&lsquo;`, `&rdquo;`, `&ldquo;`
+- Dashes: `&ndash;`, `&mdash;`
+- Special characters: `&hellip;`, `&bull;`
+- Numeric entities: `&#123;` (decimal) and `&#xAB;` (hexadecimal)
 
 ### Fallback Priority
 
