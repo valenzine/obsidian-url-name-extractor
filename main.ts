@@ -563,7 +563,12 @@ class UrlTitleFetcher {
             throw new Error('MICROLINK_RATE_LIMITED');
         }
         
-        const data = JSON.parse(res.text);
+        let data: any;
+        try {
+            data = JSON.parse(res.text);
+        } catch (error) {
+            throw new Error('Microlink: Invalid JSON response');
+        }
         
         // Check for rate limit in response body
         if (data.status === 'fail') {
