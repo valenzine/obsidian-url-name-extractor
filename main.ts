@@ -382,17 +382,17 @@ class UrlTitleFetcher {
                 
                 if (settings.fallbackPriority === 'microlink-first') {
                     if (settings.useMicrolinkFallback) {
-                        fallbacks.push({ name: 'Microlink', fn: () => this.tryMicrolinkFallback(url, settings) });
+                        fallbacks.push({ name: 'Microlink', fn: () => this.tryMicrolinkFallback(reqUrl, settings) });
                     }
                     if (settings.useArchiveFallback) {
-                        fallbacks.push({ name: 'Archive.org', fn: () => this.tryArchiveFallbackTitle(url, settings) });
+                        fallbacks.push({ name: 'Archive.org', fn: () => this.tryArchiveFallbackTitle(reqUrl, settings) });
                     }
                 } else {
                     if (settings.useArchiveFallback) {
-                        fallbacks.push({ name: 'Archive.org', fn: () => this.tryArchiveFallbackTitle(url, settings) });
+                        fallbacks.push({ name: 'Archive.org', fn: () => this.tryArchiveFallbackTitle(reqUrl, settings) });
                     }
                     if (settings.useMicrolinkFallback) {
-                        fallbacks.push({ name: 'Microlink', fn: () => this.tryMicrolinkFallback(url, settings) });
+                        fallbacks.push({ name: 'Microlink', fn: () => this.tryMicrolinkFallback(reqUrl, settings) });
                     }
                 }
                 
