@@ -1,6 +1,6 @@
 import esbuild from "esbuild";
 import process from "process";
-import { builtinModules } from 'node:module'
+import { builtinModules } from 'node:module';
 import path from "path";
 import { fileURLToPath } from 'url';
 import { copyFileSync } from 'fs';
