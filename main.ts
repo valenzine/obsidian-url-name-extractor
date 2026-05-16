@@ -8,6 +8,37 @@ class MicrolinkRateLimitError extends Error {
     }
 }
 
+class AggregatedFetchError extends Error {
+    simpleError: unknown;
+    complexError: unknown;
+    constructor(message: string, simpleError: unknown, complexError: unknown) {
+        super(message);
+        this.name = 'AggregatedFetchError';
+        this.simpleError = simpleError;
+        this.complexError = complexError;
+    }
+}
+
+interface WaybackApiResponse {
+    archived_snapshots: {
+        closest?: {
+            url: string;
+            status: string;
+            timestamp: string;
+            available: boolean;
+        };
+    };
+}
+
+interface MicrolinkApiResponse {
+    status: string;
+    code?: string;
+    message?: string;
+    data?: {
+        title?: string;
+    };
+}
+
 
 
 interface SitePattern {
@@ -53,7 +84,7 @@ export default class UrlNamer extends Plugin {
                         editor.replaceSelection(taggedText);
                         loadingIndicator.hide();
                     })
-                    .catch(e => this.modal.showMsg(e.message));
+                    .catch(e => this.modal.showMsg(e instanceof Error ? e.message : String(e)));
             }
         });
 
@@ -104,7 +135,7 @@ class UrlNameExtractorSettingTab extends PluginSettingTab {
                         this.plugin.settings.urlRegex = value;
                         await this.plugin.saveSettings();
                     } catch (e) {
-                        new Notice(`Invalid regex pattern: ${e.message}`, 5000);
+                        new Notice(`Invalid regex pattern: ${e instanceof Error ? e.message : String(e)}`, 5000);
                     }
                 })
                 .then(component => {
@@ -143,7 +174,7 @@ class UrlNameExtractorSettingTab extends PluginSettingTab {
                         this.plugin.settings.sitePatterns = patterns;
                         await this.plugin.saveSettings();
                     } catch (e) {
-                        new Notice(`Invalid site pattern: ${e.message}`, 5000);
+                        new Notice(`Invalid site pattern: ${e instanceof Error ? e.message : String(e)}`, 5000);
                     }
                 })
                 .then(component => {
@@ -189,7 +220,7 @@ class UrlNameExtractorSettingTab extends PluginSettingTab {
                     })
                     .then(component => {
                         component.inputEl.type = 'password';
-                        component.inputEl.style.width = '300px';
+                        component.inputEl.addClass('url-namer-api-key-input');
                     }));
         }
 
@@ -260,7 +291,7 @@ class UrlTagger {
         try {
             urlPattern = new RegExp(settings.urlRegex, 'gim');
         } catch (e) {
-            new Notice(`Invalid URL regex pattern in settings: ${e.message}`, 5000);
+            new Notice(`Invalid URL regex pattern in settings: ${e instanceof Error ? e.message : String(e)}`, 5000);
             return selectedText;
         }
 
@@ -295,7 +326,7 @@ class UrlTagger {
             
             // Add delay between requests (except for first one)
             if (i > 0) {
-                await new Promise(resolve => setTimeout(resolve, settings.requestDelay ?? 1000));
+                await new Promise(resolve => window.setTimeout(resolve, settings.requestDelay ?? 1000));
             }
             
             try {
@@ -368,7 +399,7 @@ class UrlTitleFetcher {
         try {
             new URL(s);
             return true;
-        } catch (err) {
+        } catch {
             return false;
         }
     };
@@ -418,11 +449,11 @@ class UrlTitleFetcher {
         };
         
         // Decode numeric entities (&#123; and &#xAB;) with validation
-        decoded = decoded.replace(/&#(\d+);/g, (match, dec) => {
+        decoded = decoded.replace(/&#(\d+);/g, (_match: string, dec: string) => {
             const value = parseInt(dec, 10);
             return codePointToString(value);
         });
-        decoded = decoded.replace(/&#x([0-9A-Fa-f]+);/g, (match, hex) => {
+        decoded = decoded.replace(/&#x([0-9A-Fa-f]+);/g, (_match: string, hex: string) => {
             const value = parseInt(hex, 16);
             return codePointToString(value);
         });
@@ -502,9 +533,11 @@ class UrlTitleFetcher {
                         'Both simple and complex fetchWithHeaders calls failed. ' +
                         `Simple fetch error: ${simpleError instanceof Error ? simpleError.message : String(simpleError)}. ` +
                         `Complex fetch error: ${complexError instanceof Error ? complexError.message : String(complexError)}.`;
-                    const aggregatedError = new Error(aggregatedMessage);
-                    (aggregatedError as any).simpleError = simpleError;
-                    (aggregatedError as any).complexError = complexError;
+                    const aggregatedError = new AggregatedFetchError(
+                        aggregatedMessage,
+                        simpleError,
+                        complexError
+                    );
                     throw aggregatedError;
                 }
             }
@@ -609,13 +642,13 @@ class UrlTitleFetcher {
                 body: res.text,
                 status: res.status
             };
-        } catch (err: any) {
+        } catch (err: unknown) {
             // requestUrl throws on non-2xx status codes
             // Check if we got a 403/503/202 error response (likely bot protection)
             // Note: Obsidian's requestUrl doesn't provide response body for error statuses
             // Return status code for bot detection - content check not needed
-            const status = (err && typeof err === 'object' && 'status' in err && typeof (err as any).status === 'number')
-                ? (err as any).status as number
+            const status = (typeof err === 'object' && err !== null && 'status' in err && typeof (err as { status: unknown }).status === 'number')
+                ? (err as { status: number }).status
                 : undefined;
                 
             if (status === 403 || status === 503 || status === 202) {
@@ -635,7 +668,8 @@ class UrlTitleFetcher {
             const title = await this.tryArchiveFallbackTitle(url, settings);
             return `[${title}](${url})`;
         } catch (archiveError) {
-            throw new Error(`⛔ Bot protection detected. Archive.org fallback failed: ${archiveError.message}`);
+            const msg = archiveError instanceof Error ? archiveError.message : String(archiveError);
+            throw new Error(`⛔ Bot protection detected. Archive.org fallback failed: ${msg}`);
         }
     }
 
@@ -648,17 +682,19 @@ class UrlTitleFetcher {
             throw new Error('Archive.org API unavailable');
         }
         
-        let apiData: any;
+        let apiData: WaybackApiResponse;
         try {
-            apiData = JSON.parse(apiRes.text);
-        } catch (err: any) {
-            throw new Error(`Invalid JSON from Archive.org API: ${err?.message || 'Unknown parse error'}`);
+            apiData = JSON.parse(apiRes.text) as WaybackApiResponse;
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : 'Unknown parse error';
+            throw new Error(`Invalid JSON from Archive.org API: ${msg}`);
         }
-        if (!apiData.archived_snapshots?.closest?.url) {
+        const closestSnapshot = apiData.archived_snapshots?.closest;
+        if (!closestSnapshot?.url) {
             throw new Error('No archived version found');
         }
         
-        let archivedUrl = apiData.archived_snapshots.closest.url;
+        let archivedUrl: string = closestSnapshot.url;
         // Fix http:// URLs from Archive.org to use https://
         if (archivedUrl.startsWith('http://')) {
             try {
@@ -699,10 +735,10 @@ class UrlTitleFetcher {
             throw new MicrolinkRateLimitError();
         }
         
-        let data: any;
+        let data: MicrolinkApiResponse;
         try {
-            data = JSON.parse(res.text);
-        } catch (error) {
+            data = JSON.parse(res.text) as MicrolinkApiResponse;
+        } catch {
             throw new Error('Microlink: Invalid JSON response');
         }
         
@@ -715,12 +751,13 @@ class UrlTitleFetcher {
             if (data.code === 'EPROXYNEEDED') {
                 throw new Error('Microlink free tier cannot bypass antibot protection (upgrade to PRO or try Archive.org)');
             }
-            throw new Error(`Microlink error: ${data.message || data.code || 'Unknown error'}`);
+            throw new Error(`Microlink error: ${data.message ?? data.code ?? 'Unknown error'}`);
         }
         
-        if (data.status === 'success' && data.data?.title) {
+        const responseTitle = data.data?.title;
+        if (data.status === 'success' && responseTitle) {
             // Clean title: remove markdown links [text](url) and extract just the text
-            let title = data.data.title;
+            let title = responseTitle;
             // Remove markdown links: [text](url) → text, handling nested brackets in link text.
             const stripMarkdownLinks = (input: string): string => {
                 let result = '';

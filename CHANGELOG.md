@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.0.4
+
+- Fix: Standardized API key input width via CSS class (`.url-namer-api-key-input`) instead of inline style for better theming
+- Fix: Replaced multiple unsafe error/message accesses with explicit `instanceof Error` guards and safer unknown handling
+- Fix: Switched bulk delay timing to `window.setTimeout` for popout window compatibility
+- Improvement: Added typed response interfaces for Archive.org and Microlink API payloads
+- Improvement: Replaced ad-hoc aggregated error object mutation with a dedicated `AggregatedFetchError` class
+- Maintenance: Replaced deprecated `builtin-modules` package usage in build config with Node's `node:module` built-ins list
+- Compatibility: Aligned `minAppVersion` mappings (`manifest.json` and `versions.json`) to `0.12.16`
+
 ## 2.0.3
 
 - Fix: Sequential processing with configurable delay prevents rate limiting when processing multiple URLs
