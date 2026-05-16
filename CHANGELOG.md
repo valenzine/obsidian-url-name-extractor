@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.0.5
+
+- Security: Added GitHub artifact attestations for release assets (`main.js` and `styles.css`) in the release workflow
+- Maintenance: Release workflow modernized to use current GitHub Actions versions and `npm ci` for reproducible builds
+
 ## 2.0.4
 
 - Fix: Standardized API key input width via CSS class (`.url-namer-api-key-input`) instead of inline style for better theming
